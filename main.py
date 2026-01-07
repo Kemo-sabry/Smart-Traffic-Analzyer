@@ -23,7 +23,7 @@ classNames = ["person", "bicycle", "car", "motorbike", "aeroplane", "bus", "trai
 traffic_classes = ["car", "motorbike", "bus", "truck", "bicycle"]
 
 # Open Video
-input_video_path = "traffic_video.mp4"
+input_video_path = "traffic_video3.mp4"
 cap = cv2.VideoCapture(input_video_path)
 
 # Data Logging List
