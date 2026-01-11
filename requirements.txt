@@ -4,3 +4,5 @@ cvzone
 numpy
 pandas
 matplotlib
+lapx
+

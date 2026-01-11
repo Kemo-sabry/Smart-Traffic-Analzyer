@@ -1,0 +1,13 @@
+# Smart Traffic Analyzer - YOLOv8 Configuration
+
+# Path to dataset
+path: ./datasets/traffic_data  # dataset root dir
+train: train/images  # train images (relative to 'path')
+val: val/images      # val images (relative to 'path')
+
+# Classes
+names:
+  0: car
+  1: bus
+  2: truck
+  3: motorcycle
