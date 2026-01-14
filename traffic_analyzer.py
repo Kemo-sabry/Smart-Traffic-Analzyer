@@ -2,6 +2,8 @@ import cv2
 import cvzone
 import math
 import numpy as np
+import csv
+import os
 from ultralytics import YOLO
 
 class TrafficAnalyzer:
@@ -9,6 +11,11 @@ class TrafficAnalyzer:
         self.cap = cv2.VideoCapture(input_video)
         self.model = YOLO(model_path)
         self.output_video = output_video
+        
+        # Define the Counting Line (StartPoint, EndPoint)
+        # Adjust these coordinates based on your video resolution and camera angle
+        self.line_start = (300, 400)
+        self.line_end = (900, 400)
         
         # Tracking Data
         self.tracked_ids = set()
@@ -28,11 +35,15 @@ class TrafficAnalyzer:
             7: "truck"
         }
         
-        # Traffic Levels (for Low/Medium/High classification)
-        self.limits = {
-            "low": 5,
-            "medium": 15
-        }
+        # CSV Logging Setup
+        self.csv_file = "traffic_features.csv"
+        self.init_csv()
+
+    def init_csv(self):
+        if not os.path.exists(self.csv_file):
+            with open(self.csv_file, mode='w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(['width', 'height', 'aspect_ratio', 'area', 'avg_color_r', 'avg_color_g', 'avg_color_b', 'confidence', 'class_label'])
         
     def process_video(self):
         print("Starting Video Analysis...")
@@ -55,32 +66,17 @@ class TrafficAnalyzer:
             # persist=True enables the internal tracker (ByteTrack by default)
             results = self.model.track(frame, persist=True, verbose=False, tracker="bytetrack.yaml")
             
-            current_on_screen_count = 0
-            
             # 2. Process Tracks
             if results[0].boxes.id is not None:
                 boxes = results[0].boxes.xyxy.cpu()
                 track_ids = results[0].boxes.id.int().cpu().tolist()
                 cls_ids = results[0].boxes.cls.int().cpu().tolist()
                 
-                current_on_screen_count = len(boxes)
-                
                 for box, track_id, cls_id in zip(boxes, track_ids, cls_ids):
                     self.update_counts(frame, box, track_id, cls_id)
             
-            # 3. Determine Traffic Status
-            if current_on_screen_count < self.limits["low"]:
-                status = "Low"
-                status_color = (0, 255, 0) # Green
-            elif current_on_screen_count < self.limits["medium"]:
-                status = "Medium"
-                status_color = (0, 255, 255) # Yellow
-            else:
-                status = "High"
-                status_color = (0, 0, 255) # Red
-            
-            # 4. Draw UI
-            self.draw_ui(frame, status, status_color, current_on_screen_count)
+            # 3. Draw UI
+            self.draw_ui(frame)
             
             # Output
             if out:
@@ -103,6 +99,8 @@ class TrafficAnalyzer:
         cx, cy = x1 + w // 2, y1 + h // 2
         
         # Get class name
+        # If using standard YOLOv8n, we map COCO IDs. 
+        # If using custom trained model, use self.model.names[cls_id]
         class_name = self.model.names[cls_id]
         
         # Only track relevant vehicles
@@ -111,7 +109,7 @@ class TrafficAnalyzer:
             if cls_id in self.class_map:
                 class_name = self.class_map[cls_id]
             else:
-                return # Ignore irrelevant classes
+                return # Ignore irrelevent classes like 'person'
         
         # Draw Bounding Box & Label
         color = (0, 200, 255) # Gold
@@ -122,29 +120,51 @@ class TrafficAnalyzer:
         cvzone.putTextRect(frame, f'{track_id} - {class_name}', (max(0, x1), max(35, y1)), scale=1, thickness=1, offset=3, colorT=(255,255,255), colorR=color)
         cv2.circle(frame, (cx, cy), 5, (255, 0, 255), cv2.FILLED)
 
-        # Counting Logic (ANY new track seen is counted)
-        if track_id not in self.tracked_ids:
-            self.tracked_ids.add(track_id)
-            self.vehicle_counts[class_name] += 1
+        # Feature Extraction for ML
+        try:
+            # Get Crop for Color Analysis
+            crop = frame[max(0, y1):min(frame.shape[0], y2), max(0, x1):min(frame.shape[1], x2)]
+            if crop.size > 0:
+                avg_bgra = cv2.mean(crop)
+                avg_b, avg_g, avg_r = avg_bgra[0], avg_bgra[1], avg_bgra[2]
+                
+                # Calculate Geometry
+                aspect_ratio = w / h if h != 0 else 0
+                area = w * h
+                confidence = float(box.conf[0]) if hasattr(box, 'conf') else 0.8 # Default if not passed
+                
+                # Log to CSV
+                with open(self.csv_file, mode='a', newline='') as f:
+                    writer = csv.writer(f)
+                    writer.writerow([w, h, aspect_ratio, area, avg_r, avg_g, avg_b, confidence, class_name])
+        except Exception as e:
+            print(f"Error logging features: {e}")
 
-    def draw_ui(self, frame, status, status_color, current_count):
-        # Draw Dashboard Background
-        cv2.rectangle(frame, (0, 0), (350, 300), (0, 0, 0), cv2.FILLED)
-        cv2.rectangle(frame, (0, 0), (350, 300), (255, 255, 255), 2)
+        # Counting Logic (Line Crossing)
+        # We define a line and check if the center point crosses it
+        # Simple proximity check for this demo (better is vector cross product)
         
-        # Title
-        cvzone.putTextRect(frame, "Traffic Monitor", (20, 40), scale=2, thickness=2, offset=5, colorR=(0,0,0))
+        line_y = self.line_start[1]
+        offset = 15 # Margin of error
         
-        # Status
-        cv2.putText(frame, f"Status: {status}", (20, 90), cv2.FONT_HERSHEY_SIMPLEX, 1, status_color, 2)
-        cv2.putText(frame, f"On Screen: {current_count}", (20, 130), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 200, 200), 2)
+        if line_y - offset < cy < line_y + offset:
+            if track_id not in self.tracked_ids:
+                self.tracked_ids.add(track_id)
+                self.vehicle_counts[class_name] += 1
+                cv2.line(frame, self.line_start, self.line_end, (0, 255, 0), 5) # Flash green
+
+    def draw_ui(self, frame):
+        # Draw Counting Line
+        cv2.line(frame, self.line_start, self.line_end, (0, 0, 255), 3)
         
-        # Detailed Counts
-        y_pos = 170
+        # Draw Dashboard
+        cvzone.putTextRect(frame, "Traffic Counter", (20, 40), scale=2, thickness=2, offset=5)
+        
+        y_pos = 100
         for vehicle, count in self.vehicle_counts.items():
             text = f"{vehicle.capitalize()}: {count}"
-            cv2.putText(frame, text, (20, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            y_pos += 30
+            cv2.putText(frame, text, (20, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+            y_pos += 40
 
 if __name__ == "__main__":
     # Example Usage
