@@ -165,5 +165,5 @@ if __name__ == "__main__":
     # Example Usage
     # Ensure you have 'traffic_video3.mp4' in the directory or change path
     # Using 'yolov8n.pt' for demo. Replace with 'runs/detect/train/weights/best.pt' after training.
-    analyzer = TrafficAnalyzer(r'traffic_analysis_project\yolov8n_custom_traffic5\weights\best.pt', 'traffic_video2.mp4', 'output_analysis.mp4')
+    analyzer = TrafficAnalyzer(r'traffic_analysis_project\yolov8n_custom_traffic5\weights\best.pt', 'traffic_video3.mp4', 'output_analysis.mp4')
     analyzer.process_video()
