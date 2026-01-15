@@ -11,31 +11,53 @@ from sklearn.neighbors import KNeighborsClassifier
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
 import os
+from datetime import datetime
 
 def train_and_compare():
     # 1. Load Data
-    csv_path = "traffic_features.csv"
+    csv_path = r"dataset2/train/TrafficTwoMonth.csv"
     if not os.path.exists(csv_path):
-        print(f"Error: {csv_path} not found. Please run traffic_analyzer.py first to generate data.")
+        print(f"Error: {csv_path} not found.")
         return
 
     df = pd.read_csv(csv_path)
     print(f"Loaded {len(df)} samples from {csv_path}")
 
     # 2. Preprocessing
-    # Filter out classes with too few samples to allow for stratified split (need at least ~10 to split 70/15/15)
-    counts = df['class_label'].value_counts()
-    valid_classes = counts[counts >= 10].index
-    if len(valid_classes) < len(counts):
-        print(f"Filtering out classes with < 10 samples: {list(counts[counts < 10].index)}")
-        df = df[df['class_label'].isin(valid_classes)].copy()
-
-    # Encode target label
-    le = LabelEncoder()
-    df['class_label_encoded'] = le.fit_transform(df['class_label'])
     
-    X = df.drop(['class_label', 'class_label_encoded'], axis=1)
-    y = df['class_label_encoded']
+    # Target Variable
+    target_col = 'Traffic Situation'
+    
+    # Feature Engineering on Time
+    # Convert 'Time' (e.g., '12:00:00 AM') to datetime objects to extract hour and minute
+    # Note: The format in the CSV seems to include AM/PM, so we use %I:%M:%S %p
+    try:
+        df['TimeObj'] = pd.to_datetime(df['Time'], format='%I:%M:%S %p').dt.time
+    except ValueError:
+        # Fallback if format is different (e.g., 24h)
+        df['TimeObj'] = pd.to_datetime(df['Time']).dt.time
+
+    # Extract Hour and Minute features
+    df['Hour'] = df['TimeObj'].apply(lambda x: x.hour)
+    df['Minute'] = df['TimeObj'].apply(lambda x: x.minute)
+    
+    # Encode Day of the week
+    le_day = LabelEncoder()
+    df['DayCode'] = le_day.fit_transform(df['Day of the week'])
+    print(f"Day mapping: {dict(zip(le_day.classes_, le_day.transform(le_day.classes_)))}")
+
+    # Encode Target
+    le_target = LabelEncoder()
+    df['TargetEncoded'] = le_target.fit_transform(df[target_col])
+    print(f"Target mapping: {dict(zip(le_target.classes_, le_target.transform(le_target.classes_)))}")
+
+    # Select Features
+    # We use the counts and the time features. We drop 'Total' to avoid potential data leakage 
+    # if Total is just sum of others, but often it's useful. Let's keep it for now as an aggregate feature.
+    feature_cols = ['CarCount', 'BikeCount', 'BusCount', 'TruckCount', 'Total', 'Hour', 'Minute', 'DayCode']
+    
+    X = df[feature_cols]
+    y = df['TargetEncoded']
     
     # 3. Feature Selection
     print("\n--- Feature Selection ---")
@@ -95,13 +117,17 @@ def train_and_compare():
         cm = confusion_matrix(y_test, test_preds)
         plt.figure(figsize=(8, 6))
         sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
-                    xticklabels=le.classes_, yticklabels=le.classes_)
+                    xticklabels=le_target.classes_, yticklabels=le_target.classes_)
         plt.title(f'Confusion Matrix: {name}')
         plt.ylabel('True Label')
         plt.xlabel('Predicted Label')
         plt.tight_layout()
         plt.savefig(f'confusion_matrix_{name.lower().replace(" ", "_")}.png')
         plt.close()
+        
+        # Classification Report
+        print(f"Classification Report for {name}:")
+        print(classification_report(y_test, test_preds, target_names=le_target.classes_))
 
     # 6. Summary Report
     print("\n--- Final Performance Comparison ---")
